@@ -2,4 +2,4 @@
 streamlit
 PyPDF2
 spacy
-https://github.com
+en-core-web-sm
