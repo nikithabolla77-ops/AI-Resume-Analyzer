@@ -1,6 +1,6 @@
 import streamlit as st
 import re
-from PyPDF2 import PdfReader
+from pypdf import PdfReader
 
 
 # =========================================================
@@ -18,9 +18,10 @@ st.set_page_config(
 # EXTRACT TEXT FROM PDF
 # =========================================================
 
-def extract_text(pdf_file):
+def extract_text_from_pdf(uploaded_file):
+
     try:
-        reader = PdfReader(pdf_file)
+        reader = PdfReader(uploaded_file)
 
         text = ""
 
@@ -42,10 +43,13 @@ def extract_text(pdf_file):
 # =========================================================
 
 def clean_text(text):
+
+    text = text.replace("\x00", " ")
+
     # Replace multiple spaces
     text = re.sub(r"[ \t]+", " ", text)
 
-    # Replace multiple blank lines
+    # Replace excessive new lines
     text = re.sub(r"\n+", "\n", text)
 
     return text.strip()
@@ -57,122 +61,192 @@ def clean_text(text):
 
 def extract_name(text):
 
-    lines = [
-        line.strip()
-        for line in text.split("\n")
-        if line.strip()
-    ]
+    if not text:
+        return "Not Found"
 
     # -----------------------------------------------------
-    # Method 1:
-    # Look for name after common name headings
-    # -----------------------------------------------------
-
-    name_headers = [
-        "name",
-        "full name",
-        "candidate name"
-    ]
-
-    for i, line in enumerate(lines):
-
-        clean_line = line.lower().replace(":", "").strip()
-
-        if clean_line in name_headers:
-
-            if i + 1 < len(lines):
-
-                possible_name = lines[i + 1].strip()
-
-                if is_valid_name(possible_name):
-                    return possible_name
-
-    # -----------------------------------------------------
-    # Method 2:
-    # Check first 20 lines
-    # -----------------------------------------------------
-
-    ignored_words = [
-        "resume",
-        "curriculum vitae",
-        "career objective",
-        "objective",
-        "education",
-        "educational qualification",
-        "qualification",
-        "skills",
-        "technical skills",
-        "experience",
-        "work experience",
-        "projects",
-        "project",
-        "certifications",
-        "certificates",
-        "linkedin",
-        "github",
-        "email",
-        "phone",
-        "contact",
-        "profile",
-        "summary"
-    ]
-
-    for line in lines[:20]:
-
-        line_lower = line.lower().strip()
-
-        # Ignore headings
-        if line_lower in ignored_words:
-            continue
-
-        # Ignore email
-        if "@" in line:
-            continue
-
-        # Ignore URLs
-        if "http" in line_lower:
-            continue
-
-        # Ignore LinkedIn/GitHub
-        if "linkedin" in line_lower or "github" in line_lower:
-            continue
-
-        # Ignore phone numbers
-        if re.search(r"\d{7,}", line):
-            continue
-
-        # Ignore lines containing too many symbols
-        if len(re.findall(r"[^a-zA-Z .'-]", line)) > 2:
-            continue
-
-        # Check whether it looks like a person's name
-        if is_valid_name(line):
-            return line
-
-    # -----------------------------------------------------
-    # Method 3:
-    # Search for common name patterns
+    # METHOD 1: Look for "Name: ..."
     # -----------------------------------------------------
 
     name_patterns = [
-        r"(?:Name|Full Name|Candidate Name)\s*[:\-]\s*([A-Za-z .'-]{3,50})",
-        r"(?:I am|I'm)\s+([A-Za-z .'-]{3,50})"
+        r"(?im)^\s*name\s*[:\-]\s*([A-Za-z][A-Za-z .'-]{2,60})\s*$",
+        r"(?im)name\s*[:\-]\s*([A-Za-z][A-Za-z .'-]{2,60})"
     ]
 
     for pattern in name_patterns:
 
-        match = re.search(
-            pattern,
-            text,
-            re.IGNORECASE
-        )
+        match = re.search(pattern, text)
 
         if match:
-
             name = match.group(1).strip()
+
+            # Remove unwanted trailing words
+            name = re.split(
+                r"\b(?:email|phone|mobile|linkedin|github|career|objective|education)\b",
+                name,
+                flags=re.IGNORECASE
+            )[0].strip()
 
             if is_valid_name(name):
                 return name
+
+    # -----------------------------------------------------
+    # METHOD 2: Check first few lines
+    # -----------------------------------------------------
+
+    lines = text.splitlines()
+
+    cleaned_lines = []
+
+    for line in lines:
+
+        line = line.strip()
+
+        if not line:
+            continue
+
+        line = re.sub(r"\s+", " ", line)
+
+        cleaned_lines.append(line)
+
+    # -----------------------------------------------------
+    # Remove common resume headings
+    # -----------------------------------------------------
+
+    ignored_words = {
+        "resume",
+        "curriculum vitae",
+        "cv",
+        "career objective",
+        "objective",
+        "profile",
+        "summary",
+        "career",
+        "education",
+        "educational qualification",
+        "skills",
+        "technical skills",
+        "projects",
+        "experience",
+        "certifications",
+        "contact",
+        "linkedin",
+        "github",
+        "email",
+        "phone",
+        "mobile",
+        "address"
+    }
+
+    # -----------------------------------------------------
+    # METHOD 3: First 15 lines
+    # -----------------------------------------------------
+
+    for line in cleaned_lines[:15]:
+
+        lower_line = line.lower()
+
+        if lower_line in ignored_words:
+            continue
+
+        # Skip lines containing email
+        if re.search(r"\S+@\S+\.\S+", line):
+            continue
+
+        # Skip lines containing phone number
+        if re.search(r"\+?\d[\d\s\-()]{8,}", line):
+            continue
+
+        # Skip URLs
+        if re.search(r"(linkedin|github|http|www\.)", lower_line):
+            continue
+
+        # Name should mostly contain letters
+        if not re.fullmatch(r"[A-Za-z .'-]+", line):
+            continue
+
+        # Remove excessive spaces
+        name = re.sub(r"\s+", " ", line).strip()
+
+        if is_valid_name(name):
+            return name
+
+    # -----------------------------------------------------
+    # METHOD 4: Handle PDF extraction where each word
+    # appears on a separate line
+    # -----------------------------------------------------
+
+    top_lines = cleaned_lines[:40]
+
+    candidate_words = []
+
+    for line in top_lines:
+
+        # Skip email
+        if "@" in line:
+            continue
+
+        # Skip URLs
+        if "linkedin" in line.lower():
+            continue
+
+        if "github" in line.lower():
+            continue
+
+        # Skip headings
+        if line.lower() in ignored_words:
+            continue
+
+        # Only consider single words
+        if re.fullmatch(r"[A-Za-z]{2,20}", line):
+
+            # Ignore common resume words
+            if line.lower() not in {
+                "bachelor",
+                "technology",
+                "artificial",
+                "intelligence",
+                "machine",
+                "learning",
+                "education",
+                "qualification",
+                "objective",
+                "career",
+                "skills",
+                "projects",
+                "experience",
+                "certifications",
+                "python",
+                "java",
+                "html",
+                "css",
+                "sql"
+            }:
+
+                candidate_words.append(line)
+
+    # Try combinations of first 2-4 words
+    for number in range(2, 5):
+
+        if len(candidate_words) >= number:
+
+            candidate = " ".join(candidate_words[:number])
+
+            if is_valid_name(candidate):
+                return candidate
+
+    # -----------------------------------------------------
+    # METHOD 5: Search anywhere for 2-4 capitalized words
+    # -----------------------------------------------------
+
+    pattern = r"\b[A-Z][a-z]{1,20}(?:\s+[A-Z][a-z]{1,20}){1,3}\b"
+
+    matches = re.findall(pattern, text)
+
+    for match in matches:
+
+        if is_valid_name(match):
+            return match.strip()
 
     return "Not Found"
 
@@ -183,55 +257,58 @@ def extract_name(text):
 
 def is_valid_name(name):
 
-    name = name.strip()
-
     if not name:
         return False
 
-    # Name should not be too long
-    if len(name) > 50:
+    name = name.strip()
+
+    # Length check
+    if len(name) < 3 or len(name) > 60:
         return False
 
-    # Split words
-    words = name.split()
-
-    # Normally a name has 2-5 words
-    if len(words) < 2 or len(words) > 5:
+    # Must contain letters
+    if not re.search(r"[A-Za-z]", name):
         return False
 
-    # Reject common resume headings
-    blocked_words = [
+    # Do not allow email
+    if "@" in name:
+        return False
+
+    # Do not allow numbers
+    if re.search(r"\d", name):
+        return False
+
+    # Common words that are NOT names
+    invalid_names = {
         "resume",
-        "curriculum",
-        "objective",
+        "curriculum vitae",
+        "career objective",
         "career",
+        "objective",
         "education",
-        "qualification",
-        "skills",
-        "technical",
+        "educational qualification",
+        "technical skills",
+        "professional skills",
+        "work experience",
         "experience",
         "projects",
         "certifications",
-        "linkedin",
-        "github",
-        "email",
-        "phone",
-        "contact"
-    ]
+        "artificial intelligence",
+        "machine learning",
+        "bachelor technology",
+        "bachelor of technology",
+        "linkedin profile",
+        "github profile"
+    }
 
-    name_lower = name.lower()
+    if name.lower() in invalid_names:
+        return False
 
-    for word in blocked_words:
-        if word in name_lower:
-            return False
+    # Too many words usually means it's a sentence
+    words = name.split()
 
-    # Every word should contain letters
-    for word in words:
-
-        cleaned_word = word.replace(".", "").replace("-", "")
-
-        if not cleaned_word.isalpha():
-            return False
+    if len(words) > 5:
+        return False
 
     return True
 
@@ -253,21 +330,15 @@ def extract_email(text):
 
 
 # =========================================================
-# EXTRACT PHONE NUMBER
+# EXTRACT PHONE
 # =========================================================
 
 def extract_phone(text):
 
     patterns = [
-
-        # Indian mobile number
-        r"(?:\+91[\s-]?)?[6-9]\d{9}",
-
-        # Phone with spaces
-        r"(?:\+91[\s-]?)?[6-9]\d{4}[\s-]?\d{5}",
-
-        # Phone with brackets
-        r"\(?\d{3,5}\)?[\s-]?\d{3,5}[\s-]?\d{4}"
+        r"\+91[\s-]?[6-9]\d{9}",
+        r"\b[6-9]\d{9}\b",
+        r"\+?\d{1,3}[\s-]?\d{10}\b"
     ]
 
     for pattern in patterns:
@@ -275,19 +346,13 @@ def extract_phone(text):
         phones = re.findall(pattern, text)
 
         if phones:
-
-            phone = phones[0]
-
-            # Remove unnecessary spaces
-            phone = re.sub(r"\s+", " ", phone).strip()
-
-            return phone
+            return phones[0]
 
     return "Not Found"
 
 
 # =========================================================
-# EXTRACT TECHNICAL SKILLS
+# EXTRACT SKILLS
 # =========================================================
 
 def extract_skills(text):
@@ -296,278 +361,10 @@ def extract_skills(text):
 
         "Python",
         "C",
-        "C++",
         "Java",
         "HTML",
         "CSS",
         "JavaScript",
         "SQL",
         "MySQL",
-        "Oracle",
-        "Machine Learning",
-        "Artificial Intelligence",
-        "AI",
-        "NLP",
-        "OpenCV",
-        "Pandas",
-        "NumPy",
-        "TensorFlow",
-        "Keras",
-        "Git",
-        "GitHub",
-        "React",
-        "Django",
-        "Flask",
-        "Streamlit",
-        "Power BI",
-        "Tableau",
-        "Excel",
-        "AWS",
-        "Azure"
-    ]
-
-    found_skills = []
-
-    text_lower = text.lower()
-
-    for skill in skills_list:
-
-        skill_lower = skill.lower()
-
-        # Use word boundary for short skills
-        if skill_lower in text_lower:
-
-            if skill not in found_skills:
-                found_skills.append(skill)
-
-    return sorted(found_skills)
-
-
-# =========================================================
-# CALCULATE RESUME SCORE
-# =========================================================
-
-def calculate_score(text, skills):
-
-    score = 0
-
-    text_lower = text.lower()
-
-    # -----------------------------------------------------
-    # Resume sections
-    # -----------------------------------------------------
-
-    sections = [
-
-        ["skills", "technical skills"],
-
-        ["education", "qualification"],
-
-        ["projects", "project"],
-
-        ["experience", "internship", "work experience"],
-
-        ["certifications", "certificates"],
-
-        ["objective", "summary", "career objective"],
-
-        ["contact", "email", "phone"]
-    ]
-
-    for section in sections:
-
-        if any(word in text_lower for word in section):
-
-            score += 10
-
-    # -----------------------------------------------------
-    # Skills
-    # -----------------------------------------------------
-
-    if len(skills) >= 3:
-        score += 10
-
-    elif len(skills) >= 1:
-        score += 5
-
-    # -----------------------------------------------------
-    # Email
-    # -----------------------------------------------------
-
-    if extract_email(text) != "Not Found":
-        score += 5
-
-    # -----------------------------------------------------
-    # Phone
-    # -----------------------------------------------------
-
-    if extract_phone(text) != "Not Found":
-        score += 5
-
-    # Maximum score
-    return min(score, 100)
-
-
-# =========================================================
-# STREAMLIT INTERFACE
-# =========================================================
-
-st.title("📄 AI Resume Analyzer")
-
-st.write(
-    "Upload your resume and automatically extract important "
-    "information using Python, NLP and Regex."
-)
-
-
-# =========================================================
-# UPLOAD PDF
-# =========================================================
-
-uploaded_file = st.file_uploader(
-    "Upload your Resume",
-    type=["pdf"]
-)
-
-
-# =========================================================
-# PROCESS RESUME
-# =========================================================
-
-if uploaded_file:
-
-    st.success("Resume uploaded successfully! ✅")
-
-    # -----------------------------------------------------
-    # Extract text
-    # -----------------------------------------------------
-
-    resume_text = extract_text(uploaded_file)
-
-    resume_text = clean_text(resume_text)
-
-    # -----------------------------------------------------
-    # Check extracted text
-    # -----------------------------------------------------
-
-    if not resume_text:
-
-        st.error(
-            "Unable to extract text from this PDF. "
-            "Please upload a text-based PDF."
-        )
-
-    else:
-
-        # -------------------------------------------------
-        # Extract candidate details
-        # -------------------------------------------------
-
-        name = extract_name(resume_text)
-
-        email = extract_email(resume_text)
-
-        phone = extract_phone(resume_text)
-
-        skills = extract_skills(resume_text)
-
-        score = calculate_score(
-            resume_text,
-            skills
-        )
-
-
-        # =================================================
-        # CANDIDATE INFORMATION
-        # =================================================
-
-        st.header("👤 Candidate Information")
-
-        col1, col2, col3 = st.columns(3)
-
-        with col1:
-
-            st.subheader("Name")
-
-            st.write(name)
-
-
-        with col2:
-
-            st.subheader("Email")
-
-            st.write(email)
-
-
-        with col3:
-
-            st.subheader("Phone")
-
-            st.write(phone)
-
-
-        # =================================================
-        # TECHNICAL SKILLS
-        # =================================================
-
-        st.header("💻 Technical Skills")
-
-        if skills:
-
-            for skill in skills:
-
-                st.write(
-                    f"✅ {skill}"
-                )
-
-        else:
-
-            st.write(
-                "No technical skills detected."
-            )
-
-
-        # =================================================
-        # RESUME SCORE
-        # =================================================
-
-        st.header("📊 Resume Score")
-
-        st.progress(
-            score / 100
-        )
-
-        st.write(
-            f"Score: {score}/100"
-        )
-
-
-        # =================================================
-        # EXTRACTED RESUME
-        # =================================================
-
-        st.header("📄 Extracted Resume")
-
-        with st.expander(
-            "View extracted text"
-        ):
-
-            st.text(
-                resume_text
-            )
-
-
-        # =================================================
-        # DOWNLOAD EXTRACTED TEXT
-        # =================================================
-
-        st.download_button(
-
-            label="Download Extracted Text",
-
-            data=resume_text,
-
-            file_name="extracted_resume.txt",
-
-            mime="text/plain"
-        )
+        "Machine
