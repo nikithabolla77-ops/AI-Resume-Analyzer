@@ -29,18 +29,45 @@ def extract_text(pdf_file):
 
 # -----------------------------
 # Extract Name
-# -----------------------------
 def extract_name(text):
+    lines = [line.strip() for line in text.split("\n") if line.strip()]
 
-    doc = nlp(text[:3000])
+    # First, look for a line containing Name:
+    for line in lines:
+        if re.match(r"^(name|full name)\s*[:\-]", line, re.I):
+            name = re.sub(r"^(name|full name)\s*[:\-]\s*", "", line, flags=re.I).strip()
+            if name:
+                return name
 
-    for entity in doc.ents:
+    # Words that should not be considered as a person's name
+    ignore_words = {
+        "resume", "curriculum vitae", "cv", "coursera",
+        "objective", "summary", "education", "skills",
+        "technical skills", "experience", "projects",
+        "certifications", "contact", "profile"
+    }
 
-        if entity.label_ == "PERSON":
-            return entity.text.strip()
+    # Check the first few lines of the resume
+    for line in lines[:10]:
+        clean_line = re.sub(r"[^A-Za-z .'-]", "", line).strip()
+
+        if not clean_line:
+            continue
+
+        if clean_line.lower() in ignore_words:
+            continue
+
+        # Don't use email, phone numbers or headings
+        if "@" in line or re.search(r"\d{5,}", line):
+            continue
+
+        words = clean_line.split()
+
+        # A person's name usually has 2–5 words
+        if 2 <= len(words) <= 5:
+            return clean_line
 
     return "Not Found"
-
 
 # -----------------------------
 # Extract Email
