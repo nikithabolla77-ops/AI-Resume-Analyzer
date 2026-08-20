@@ -355,10 +355,13 @@ def extract_phone(text):
 # EXTRACT SKILLS
 # =========================================================
 
+# ==================================================
+# EXTRACT SKILLS
+# ==================================================
+
 def extract_skills(text):
 
     skills_list = [
-
         "Python",
         "C",
         "Java",
@@ -367,4 +370,28 @@ def extract_skills(text):
         "JavaScript",
         "SQL",
         "MySQL",
-        "Machine
+        "Machine Learning",
+        "Deep Learning",
+        "Data Analysis",
+        "Data Science",
+        "React",
+        "Node.js",
+        "Django",
+        "Flask",
+        "AWS",
+        "Git",
+        "Github",
+        "Excel",
+        "Power BI",
+        "Communication",
+        "Teamwork",
+        "Problem Solving",
+    ]
+
+    found_skills = []
+
+    for skill in skills_list:
+        if skill.lower() in text.lower():
+            found_skills.append(skill)
+
+    return found_skills if found_skills else ["Not Found"]
